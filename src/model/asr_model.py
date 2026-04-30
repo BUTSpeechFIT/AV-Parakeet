@@ -1099,7 +1099,7 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
             with open(text_path, 'w', encoding='utf-8') as f:
                 f.write(text)
             
-            print(f"Saved debug sample to {debug_dir / filename_base}.*")
+            logging.info("Saved debug sample to %s.*", debug_dir / filename_base)
 
         if self.extract_features_on_the_fly:
             # video_frames: BxTxSxCxHxW
@@ -1357,7 +1357,6 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
         """
         WithOptionalCudaGraphs.disable_cuda_graphs_recursive(self, attribute_path="decoding.decoding")
 
-        print("on_validation_epoch_end")
         # Case where we dont provide data loaders
         if self.validation_step_outputs is not None and len(self.validation_step_outputs) == 0:
             return {}
@@ -1382,8 +1381,6 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
             self.meeteval_mt_wer.reset()
 
             if output_dict is not None and 'log' in output_dict:
-                if is_global_rank_zero():
-                    print('output_dict', output_dict)
                 self.log_dict(output_dict.pop('log'), on_epoch=True, sync_dist=sync_metrics)
 
             self.validation_step_outputs.clear()  # free memory
@@ -1558,7 +1555,7 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
                 try:
                     norms.append(g.detach().data.norm(2))
                 except Exception:
-                    pass
+                    continue
         if len(norms) == 0:
             return None
         return torch.sqrt(torch.sum(torch.stack([n * n for n in norms])))
@@ -1579,7 +1576,7 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
                     n = p.grad.detach().data.norm(2)
                     total_norm_terms.append(n * n)
                 except Exception:
-                    pass
+                    continue
         total_norm = torch.sqrt(torch.sum(torch.stack(total_norm_terms))) if len(total_norm_terms) else None
 
         # Log via lightning's logger (appears in TensorBoard/WandB)
@@ -1707,29 +1704,18 @@ class EncDecRNNTModelSTNOAV(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASR
                 audio_encoder_group.append(p)
                 processed_param_names.add(n)
 
+        def add_param_group(params, multiplier_key, label):
+            if not params:
+                return
+            learning_rate = self.cfg.optim.lr * self.cfg.get(multiplier_key, 1)
+            param_groups.append({"params": params, "lr": learning_rate})
+            logging.info("%s lr: %s", label, learning_rate)
+
         assert audio_encoder_group, "Audio encoder group is empty!"
-        param_groups.append({
-            "params": audio_encoder_group, "lr": self.cfg.optim.lr * self.cfg.get('audio_encoder_lr_multiplier', 1)
-        })
-        print(f"Audio encoder lr: {self.cfg.optim.lr * self.cfg.get('audio_encoder_lr_multiplier', 1)}")
-
-        if fddt_group:
-            param_groups.append({
-                "params": fddt_group, "lr": self.cfg.optim.lr * self.cfg.get('fddt_lr_multiplier', 1)
-            })
-            print(f"FDDT lr: {self.cfg.optim.lr * self.cfg.get('fddt_lr_multiplier', 1)}")
-
-        if vis_preproc_group:
-            param_groups.append({
-                "params": vis_preproc_group, "lr": self.cfg.optim.lr * self.cfg.get('vis_preproc_lr_multiplier', 1)
-            })
-            print(f"Visual preprocessing lr: {self.cfg.optim.lr * self.cfg.get('vis_preproc_lr_multiplier', 1)}")
-
-        if vis_feat_extractor_group:
-            param_groups.append({
-                "params": vis_feat_extractor_group, "lr": self.cfg.optim.lr * self.cfg.get('vis_feat_extractor_lr_multiplier', 1)
-            })
-            print(f"Visual feature extractor lr: {self.cfg.optim.lr * self.cfg.get('vis_feat_extractor_lr_multiplier', 1)}")
+        add_param_group(audio_encoder_group, 'audio_encoder_lr_multiplier', "Audio encoder")
+        add_param_group(fddt_group, 'fddt_lr_multiplier', "FDDT")
+        add_param_group(vis_preproc_group, 'vis_preproc_lr_multiplier', "Visual preprocessing")
+        add_param_group(vis_feat_extractor_group, 'vis_feat_extractor_lr_multiplier', "Visual feature extractor")
 
         if "optim_param_groups" in self.cfg:
             param_groups_cfg = self.cfg.optim_param_groups

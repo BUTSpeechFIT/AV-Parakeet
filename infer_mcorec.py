@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import glob
-import json
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +21,15 @@ from utils.inference import (
     InferenceRuntime,
     decode_video_frames,
     extract_word_spans,
+    format_vtt_timestamp,
+    frame_range_from_metadata,
     frames_to_video_tensor,
+    load_json,
     load_audio_and_num_frames,
 )
 
 
 FPS = 25
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def load_crop_metadata(session_dir: Path, track: dict[str, Any]) -> dict[str, Any]:
@@ -42,27 +39,6 @@ def load_crop_metadata(session_dir: Path, track: dict[str, Any]) -> dict[str, An
         raise FileNotFoundError(f"Crop metadata not found: {metadata_path}")
 
     return load_json(metadata_path)
-
-
-def frame_range_from_metadata(metadata: dict[str, Any], fps: int = FPS) -> tuple[int, int]:
-    if "frame_start" in metadata and "frame_end" in metadata:
-        return int(metadata["frame_start"]), int(metadata["frame_end"])
-
-    start_time = float(metadata.get("start_time", 0.0))
-    end_time = float(metadata.get("end_time", start_time))
-
-    return round(start_time * fps), round(end_time * fps)
-
-
-def format_vtt_timestamp(seconds: float) -> str:
-    seconds = max(seconds, 0.0)
-
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    whole_seconds = int(seconds % 60)
-    milliseconds = int((seconds - int(seconds)) * 1000)
-
-    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
 
 
 def create_filled_lip_frames(

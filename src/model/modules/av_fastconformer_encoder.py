@@ -137,10 +137,6 @@ class VisualProcessingModule(nn.Module):
             downsampled_visual_embeds = torch.nn.functional.pad(downsampled_visual_embeds, (0,0,0,shape_diff,0,0))
         elif shape_diff < 0:
             downsampled_visual_embeds = downsampled_visual_embeds[:, :audio_signal.shape[1], :]
-        elif shape_diff == 0:
-            pass
-        else:
-            raise ValueError('Audio and visual embeddings have different time dimensions even after downsampling: {} vs {}.'.format(audio_signal.shape[1], downsampled_visual_embeds.shape[1]))
         
         # We have matching shapes between acoustic and conditioning sequence, now we can add more parameters to further transform the visual embeddings.
         if self.visual_preprocessing_model == 'extra_conv':

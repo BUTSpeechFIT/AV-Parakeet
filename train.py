@@ -12,49 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# PREPEND PATH
-import os
+from pathlib import Path
 import sys
-sys.path.append(os.path.dirname(__file__))
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 import lightning.pytorch as pl
 from omegaconf import OmegaConf
 
+from nemo.collections.asr.models import ASRModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.trainer_utils import resolve_trainer_cfg
-from nemo.collections.asr.models import ASRModel
-
-# We need to change the behavior of the _is_target_allowed function to be able to specify targets outside of nemo.
-import nemo.core.classes
-nemo.core.classes.common._is_target_allowed = lambda x: True
+from utils.nemo import allow_external_nemo_targets
 
 from src.model.asr_bpe_model import EncDecRNNTBPEModelSTNOAV
 
-from pytorch_lightning.callbacks import Callback
-class EvalAtStartCallback(Callback):
-    def on_train_start(self, trainer, pl_module):
-        print("Evaluating at start...")
-        trainer.validate(pl_module)
+allow_external_nemo_targets()
+
+
+def maybe_load_pretrained_model(model_name: str | None) -> ASRModel | None:
+    if not model_name:
+        return None
+    return ASRModel.from_pretrained(model_name=model_name, map_location="cpu")
+
 
 @hydra_runner(config_path="conf", config_name="av_parakeet")
 def main(cfg):
-    logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg)}')
+    logging.info("Hydra config:\n%s", OmegaConf.to_yaml(cfg))
 
     trainer = pl.Trainer(**resolve_trainer_cfg(cfg.trainer))
-    init_from_pretrained = cfg.get("init_from_pretrained", None)
-    pretrained_model = None
-    if init_from_pretrained is not None:
-        pretrained_model = ASRModel.from_pretrained(model_name=init_from_pretrained, map_location='cpu')
+    init_from_pretrained = cfg.get("init_from_pretrained")
+    pretrained_model = maybe_load_pretrained_model(init_from_pretrained)
 
     exp_manager(trainer, cfg.get("exp_manager", None))
-    asr_model = EncDecRNNTBPEModelSTNOAV(cfg=cfg.model, trainer=trainer, tokenizer=pretrained_model.tokenizer if pretrained_model is not None else None)
+    asr_model = EncDecRNNTBPEModelSTNOAV(
+        cfg=cfg.model,
+        trainer=trainer,
+        tokenizer=pretrained_model.tokenizer if pretrained_model is not None else None,
+    )
 
-    if init_from_pretrained is not None:
+    if pretrained_model is not None:
         missing, unexpected = asr_model.load_state_dict(pretrained_model.state_dict(), strict=False)
-        print(f"Missing keys: {missing}")
-        print(f"Unexpected keys: {unexpected}")
+        logging.info("Missing keys: %s", missing)
+        logging.info("Unexpected keys: %s", unexpected)
 
     # Initialize the weights of the model from another model, if provided via config
     asr_model.maybe_init_from_pretrained_checkpoint(cfg)

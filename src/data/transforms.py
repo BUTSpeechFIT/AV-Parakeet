@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Callable
 
+import numpy as np
+import random
 import torch
 import torchaudio
 import torchvision
-import random
-import numpy as np
 from python_speech_features import logfbank
 import torch.nn as nn
 import torch.nn.functional as F
@@ -237,7 +238,7 @@ class VideoTransform:
     def __init__(self, subset, perform_time_mask=True):
         if subset == "train":
             if not perform_time_mask:
-                print("Skipping time masking on trainset.")
+                logging.info("Skipping time masking on train set.")
 
             self.video_pipeline = torch.nn.Sequential(
                 FunctionalModule(lambda x: x / 255.0),

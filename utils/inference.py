@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Mapping
 
 import cv2
 import numpy as np
@@ -10,13 +13,13 @@ import torch
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 
+from utils.nemo import allow_external_nemo_targets
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Allow restoring custom model targets from the checkpoint.
-import nemo.core.classes
-nemo.core.classes.common._is_target_allowed = lambda _: True
+allow_external_nemo_targets()
 
 from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.parts.preprocessing.features import WaveformFeaturizer
@@ -32,6 +35,20 @@ from src.model.asr_bpe_model import EncDecRNNTBPEModelSTNOAV
 
 AUDIO_SAMPLE_RATE = 16_000
 DEFAULT_AVHUBERT_CHUNK_SIZE = 20
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "conf" / "av_parakeet.yaml"
+DEFAULT_VIDEO_FPS = 25
+VIDEO_EXTENSIONS = frozenset(
+    {
+        ".avi",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".webm",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -49,21 +66,135 @@ def select_device(device_name: str) -> torch.device:
     return torch.device(device_name)
 
 
+def load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as file_obj:
+        return json.load(file_obj)
+
+
+def load_inference_config(
+    checkpoint_path: Path,
+    config_path: Path = DEFAULT_CONFIG_PATH,
+) -> DictConfig:
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config not found: {config_path}")
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    cfg = OmegaConf.load(config_path)
+    cfg.init_from_ptl_ckpt = str(checkpoint_path)
+    return cfg
+
+
+def collect_video_paths(input_path: Path) -> list[Path]:
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path not found: {input_path}")
+
+    if input_path.is_file():
+        return [input_path]
+
+    if not input_path.is_dir():
+        raise ValueError(f"Input path must be a file or directory: {input_path}")
+
+    video_paths = sorted(
+        path
+        for path in input_path.iterdir()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    )
+    if not video_paths:
+        raise ValueError(f"No supported video files found in: {input_path}")
+
+    duplicate_stems = sorted(
+        stem for stem, count in Counter(path.stem for path in video_paths).items()
+        if count > 1
+    )
+    if duplicate_stems:
+        raise ValueError(
+            "Duplicate video stems would overwrite CTM outputs: "
+            + ", ".join(duplicate_stems)
+        )
+
+    return video_paths
+
+
+def merge_spans(
+    spans: list[TranscriptSpan],
+    max_gap_seconds: float | None,
+) -> list[TranscriptSpan]:
+    if max_gap_seconds is None or len(spans) < 2:
+        return spans
+
+    merged: list[TranscriptSpan] = []
+    current = spans[0]
+
+    for span in spans[1:]:
+        if span.start - current.end <= max_gap_seconds:
+            current = TranscriptSpan(
+                text=f"{current.text} {span.text}",
+                start=current.start,
+                end=max(current.end, span.end),
+            )
+            continue
+
+        merged.append(current)
+        current = span
+
+    merged.append(current)
+    return merged
+
+
+def write_ctm(
+    output_path: Path,
+    utterance_id: str,
+    spans: list[TranscriptSpan],
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as file_obj:
+        for span in spans:
+            duration = max(0.0, span.end - span.start)
+            file_obj.write(
+                f"{utterance_id} 1 {span.start:.3f} {duration:.3f} {span.text}\n"
+            )
+
+
+def frame_range_from_metadata(
+    metadata: Mapping[str, Any],
+    fps: int = DEFAULT_VIDEO_FPS,
+) -> tuple[int, int]:
+    if "frame_start" in metadata and "frame_end" in metadata:
+        return int(metadata["frame_start"]), int(metadata["frame_end"])
+
+    start_time = float(metadata.get("start_time", 0.0))
+    end_time = float(metadata.get("end_time", start_time))
+    return round(start_time * fps), round(end_time * fps)
+
+
+def format_vtt_timestamp(seconds: float) -> str:
+    seconds = max(seconds, 0.0)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    whole_seconds = int(seconds % 60)
+    milliseconds = int((seconds - int(seconds)) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
+
+
 def require_video_decoder() -> None:
     if VideoDecoder is None:
         raise RuntimeError("torchcodec.VideoDecoder is required for inference.")
 
 
-def decode_video_frames(video_path: Path) -> np.ndarray:
+def create_video_decoder(video_path: Path, dimension_order: str = "NHWC") -> VideoDecoder:
     require_video_decoder()
-
-    decoder = VideoDecoder(
+    return VideoDecoder(
         str(video_path),
         device="cpu",
         seek_mode="exact",
         num_ffmpeg_threads=1,
-        dimension_order="NHWC",
+        dimension_order=dimension_order,
     )
+
+
+def decode_video_frames(video_path: Path) -> np.ndarray:
+    decoder = create_video_decoder(video_path)
     if len(decoder) == 0:
         return np.empty((0, 0, 0, 3), dtype=np.uint8)
 
@@ -100,15 +231,7 @@ def load_audio_and_num_frames(
     video_path: Path,
     audio_featurizer: WaveformFeaturizer,
 ) -> tuple[torch.Tensor, int, int]:
-    require_video_decoder()
-
-    decoder = VideoDecoder(
-        str(video_path),
-        device="cpu",
-        seek_mode="exact",
-        num_ffmpeg_threads=1,
-        dimension_order="NHWC",
-    )
+    decoder = create_video_decoder(video_path)
     audio = load_audio_from_video(video_path, audio_featurizer)
     return audio, AUDIO_SAMPLE_RATE, len(decoder)
 
@@ -127,6 +250,21 @@ def frames_to_video_tensor(
     )
     video_tensor = video_transform(torch.from_numpy(grayscale_frames).unsqueeze(1))
     return video_tensor.unsqueeze(2) if add_speaker_dim else video_tensor
+
+
+def load_audio_video_tensors(
+    video_path: Path,
+    audio_featurizer: WaveformFeaturizer,
+    video_transform: VideoTransform,
+    add_speaker_dim: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    audio = load_audio_from_video(video_path, audio_featurizer)
+    frames = decode_video_frames(video_path)
+    return audio, frames_to_video_tensor(
+        frames,
+        video_transform,
+        add_speaker_dim=add_speaker_dim,
+    )
 
 
 def get_token_duration_seconds(cfg: DictConfig) -> float:
@@ -181,6 +319,18 @@ def load_asr_model(cfg: DictConfig) -> EncDecRNNTBPEModelSTNOAV:
 
 
 class InferenceRuntime:
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint_path: Path,
+        device_name: str = "auto",
+        config_path: Path = DEFAULT_CONFIG_PATH,
+    ) -> InferenceRuntime:
+        return cls(
+            cfg=load_inference_config(checkpoint_path, config_path=config_path),
+            device_name=device_name,
+        )
+
     def __init__(self, cfg: DictConfig, device_name: str = "auto"):
         self.cfg = cfg
         self.device = select_device(device_name)

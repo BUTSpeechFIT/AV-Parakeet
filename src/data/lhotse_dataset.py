@@ -501,80 +501,14 @@ class LhotseAVToBPEAndSTNODataset(torch.utils.data.Dataset):
 
         # VIDEO FRAMES LOADING
         if self.return_video and self.video_key is not None:
-            per_spk_videos = self._build_per_spk_vid_paths(cut)
-
-            if isinstance(cut, MixedCut):
-                if target_spk not in per_spk_videos:
-                    raise ValueError(f"Speaker {target_spk} not found in video paths.")
-                
-                assert set(per_spk_videos.keys()) == all_speakers, "Mismatch between video paths and speakers in the cut."
-
-                # Load all video frames for the track
-                per_spk_tracks = dict([(s, t) for t in cut.tracks for s in CutSet.from_cuts([t.cut]).speakers])
-                track = per_spk_tracks[target_spk]
-
-                # Target speaker is always going to be the first one.
-                if self.return_all_spks:
-                    all_spk_video_frames = [
-                        self._get_transformed_spk_video_from_mixed_cut(
-                            cut_duration, track, target_spk, per_spk_videos, start_vid_idx, end_vid_idx
-                        )[0]
-                    ]
-
-                    for other_speaker in sorted(all_speakers):
-                        if other_speaker == target_spk:
-                            continue
-                        
-                        track = per_spk_tracks[other_speaker]
-                        spk_video_frames, _ = self._get_transformed_spk_video_from_mixed_cut(
-                            cut_duration, track, other_speaker, per_spk_videos, start_vid_idx, end_vid_idx
-                        )
-                        all_spk_video_frames.append(spk_video_frames)
-                    max_len = max([vf.shape[0] for vf in all_spk_video_frames])
-                    min_len = min([vf.shape[0] for vf in all_spk_video_frames])
-                    if max_len - min_len > 10:
-                        logging.warning(f"Significant video length mismatch among speakers in cut {cut.id}: max len {max_len}, min len {min_len}")
-                    all_spk_video_frames = [vf[:min_len] for vf in all_spk_video_frames]
-                    video_frames = torch.stack(all_spk_video_frames, dim=1)  # (T, S, C, H, W)
-                else:
-                    video_frames, zero_frame_idxes = self._get_transformed_spk_video_from_mixed_cut(
-                        cut_duration, track, target_spk, per_spk_videos, start_vid_idx, end_vid_idx
-                    )
-                    video_frames = video_frames.unsqueeze(1)  # 1 speaker.
-
-                zero_frame_idxes = np.array([], dtype=np.int64)  # Not tracking zero frames for all speakers
-            else:
-                if target_spk not in cut.custom[self.video_key]:
-                    raise ValueError(f"Speaker {target_spk} not found in video paths {cut.custom[self.video_key]}.")
-                
-                if self.return_all_spks:
-                    all_spk_video_frames = [
-                        self._get_transformed_spk_video_from_mono_cut(
-                            cut, target_spk, start_vid_idx, end_vid_idx
-                        )[0]
-                    ]
-                    for other_speaker in sorted(all_speakers):
-                        if other_speaker == target_spk:
-                            continue
-                        
-                        spk_video_frames, _ = self._get_transformed_spk_video_from_mono_cut(
-                            cut, other_speaker, start_vid_idx, end_vid_idx
-                        )
-                        all_spk_video_frames.append(spk_video_frames)
-
-                    max_len = max([vf.shape[0] for vf in all_spk_video_frames])
-                    min_len = min([vf.shape[0] for vf in all_spk_video_frames])
-                    if max_len - min_len > 10:
-                        logging.warning(f"Significant video length mismatch among speakers in cut {cut.id}: max len {max_len}, min len {min_len}")
-                    all_spk_video_frames = [vf[:min_len] for vf in all_spk_video_frames]
-                    video_frames = torch.stack(all_spk_video_frames, dim=1)  # (T, S, C, H, W)
-                    zero_frame_idxes = np.array([], dtype=np.int64)
-                else:
-                    video_frames, zero_frame_idxes = self._get_transformed_spk_video_from_mono_cut(
-                        cut, target_spk, start_vid_idx, end_vid_idx
-                    )
-
-                    video_frames = video_frames.unsqueeze(1) # 1 speaker.
+            video_frames, zero_frame_idxes = self._load_video_frames(
+                cut,
+                target_spk,
+                all_speakers,
+                start_vid_idx,
+                end_vid_idx,
+                cut_duration,
+            )
         else:
             video_frames = torch.tensor([])
             zero_frame_idxes = np.array([], dtype=np.int64)
@@ -597,19 +531,90 @@ class LhotseAVToBPEAndSTNODataset(torch.utils.data.Dataset):
             torch.tensor(len(all_speakers), dtype=torch.long) if self.return_all_spks else torch.tensor(1, dtype=torch.long),
             cut.id
         )
+
+    def _load_video_frames(self, cut, target_spk, all_speakers, start_vid_idx, end_vid_idx, cut_duration):
+        if isinstance(cut, MixedCut):
+            per_spk_videos = self._build_per_spk_vid_paths(cut)
+            if target_spk not in per_spk_videos:
+                raise ValueError(f"Speaker {target_spk} not found in video paths.")
+            assert set(per_spk_videos.keys()) == all_speakers, "Mismatch between video paths and speakers in the cut."
+
+            per_spk_tracks = {
+                speaker: track
+                for track in cut.tracks
+                for speaker in CutSet.from_cuts([track.cut]).speakers
+            }
+
+            def load_video(speaker):
+                return self._get_transformed_spk_video_from_mixed_cut(
+                    cut_duration,
+                    per_spk_tracks[speaker],
+                    speaker,
+                    per_spk_videos,
+                    start_vid_idx,
+                    end_vid_idx,
+                )
+
+        else:
+            if target_spk not in cut.custom[self.video_key]:
+                raise ValueError(f"Speaker {target_spk} not found in video paths {cut.custom[self.video_key]}.")
+
+            def load_video(speaker):
+                return self._get_transformed_spk_video_from_mono_cut(
+                    cut,
+                    speaker,
+                    start_vid_idx,
+                    end_vid_idx,
+                )
+
+        if self.return_all_spks:
+            video_frames = self._stack_speaker_video_frames(
+                cut.id,
+                self._collect_target_first_speaker_video_frames(
+                    target_spk,
+                    all_speakers,
+                    load_video,
+                ),
+            )
+            return video_frames, np.array([], dtype=np.int64)
+
+        video_frames, zero_frame_idxes = load_video(target_spk)
+        return video_frames.unsqueeze(1), zero_frame_idxes
+
+    def _collect_target_first_speaker_video_frames(self, target_spk, all_speakers, load_video):
+        all_spk_video_frames = [load_video(target_spk)[0]]
+        for other_speaker in sorted(all_speakers):
+            if other_speaker == target_spk:
+                continue
+            all_spk_video_frames.append(load_video(other_speaker)[0])
+        return all_spk_video_frames
+
+    def _stack_speaker_video_frames(self, cut_id, all_spk_video_frames):
+        max_len = max(vf.shape[0] for vf in all_spk_video_frames)
+        min_len = min(vf.shape[0] for vf in all_spk_video_frames)
+        if max_len - min_len > 10:
+            logging.warning(
+                f"Significant video length mismatch among speakers in cut {cut_id}: "
+                f"max len {max_len}, min len {min_len}"
+            )
+        return torch.stack([vf[:min_len] for vf in all_spk_video_frames], dim=1)
+
+    def _apply_video_transform(self, video_frames):
+        if self.video_transform_type == 'avhubert':
+            video_frames = np.stack([
+                cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+                for frame in video_frames.permute(0, 2, 3, 1).numpy()
+            ])
+            return self.video_transform(torch.from_numpy(video_frames).unsqueeze(1))
+        if self.video_transform_type == 'dinov3':
+            return self.video_transform(video_frames, return_tensors="pt")['pixel_values'].to('cpu')
+        return video_frames
     
     def _get_transformed_spk_video_from_mono_cut(self, cut, spk, start_vid_idx, end_vid_idx) -> torch.Tensor:
         vid_dec = VideoDecoder(self._replace_path(cut.custom[self.video_key][spk]), dimension_order="NCHW")
         video_frames = vid_dec[start_vid_idx:end_vid_idx]
         zero_frame_idxes = (video_frames == 0).all(dim=(1,2,3)).nonzero(as_tuple=True)[0]
-
-        if self.video_transform_type == 'avhubert':
-            video_frames = np.stack([cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) for frame in video_frames.permute(0, 2, 3, 1).numpy()])
-            video_frames = self.video_transform(torch.from_numpy(video_frames).unsqueeze(1))  # Add channel dim
-        elif self.video_transform_type == 'dinov3':
-            video_frames = self.video_transform(video_frames, return_tensors="pt")['pixel_values'].to('cpu')
-
-        return video_frames, zero_frame_idxes
+        return self._apply_video_transform(video_frames), zero_frame_idxes
     
     def _get_transformed_spk_video_from_mixed_cut(self, cut_duration, track, spk, per_spk_videos, start_vid_idx, end_vid_idx) -> torch.Tensor:
         vid_dec = VideoDecoder(self._replace_path(per_spk_videos[spk]), dimension_order="NCHW")
@@ -621,14 +626,7 @@ class LhotseAVToBPEAndSTNODataset(torch.utils.data.Dataset):
         # Now extract the relevant segment from the padded video
         video_frames = video_frames[start_vid_idx:end_vid_idx]
         zero_frame_idxes = (video_frames == 0).all(dim=(1,2,3)).nonzero(as_tuple=True)[0]
-
-        if self.video_transform_type == 'avhubert':
-            video_frames = np.stack([cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) for frame in video_frames.permute(0, 2, 3, 1).numpy()])
-            video_frames = self.video_transform(torch.from_numpy(video_frames).unsqueeze(1)) # Add channel dim
-        elif self.video_transform_type == 'dinov3':
-            video_frames = self.video_transform(video_frames, return_tensors="pt")['pixel_values'].to('cpu')
-
-        return video_frames, zero_frame_idxes
+        return self._apply_video_transform(video_frames), zero_frame_idxes
     
     def _build_per_spk_vid_paths(self, cut):
         if isinstance(cut, MixedCut):
