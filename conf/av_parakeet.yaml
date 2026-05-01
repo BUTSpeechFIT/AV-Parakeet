@@ -1,0 +1,251 @@
+name: av_parakeet
+seed: 1234
+
+evaluate_at_start: false
+init_from_pretrained: BUT-FIT/AV-Parakeet_v0.1
+# init_from_pretrained: nvidia/parakeet-tdt-0.6b-v2 # Initialization before training.
+# init_from_ptl_ckpt: ??? # If you want to initialize from a pre-trained model checkpoint.
+
+model:
+  sample_rate: 16000
+  compute_eval_loss: false
+  log_prediction: true
+  skip_nan_grad: false
+  fddt_lr_multiplier: 1.0
+  model_defaults:
+    enc_hidden: ${model.encoder.d_model}
+    pred_hidden: 640
+    joint_hidden: 640
+    tdt_durations: [0, 1, 2, 3, 4]
+    num_tdt_durations: 5
+  train_ds:
+    manifest_filepath: ./manifests/train_cuts_fixed2.jsonl.gz
+    sample_rate: ${model.sample_rate}
+    batch_size: 16
+    shuffle: true
+    num_workers: 16
+    prefetch_factor: 4
+    pin_memory: true
+    max_duration: 10000
+    min_duration: 0.1
+    is_tarred: false
+    tarred_audio_filepaths: null
+    shuffle_n: 2048
+    bucketing_strategy: synced_randomized
+    bucketing_batch_size: null
+    use_lhotse: true
+    channel_selector: average
+    use_asd_for_stno: true
+    return_stno: false
+    return_video: true
+    return_visual_features: false
+    randomly_mask_audio_signal: true
+    max_random_audio_mask_span_seconds: 5.0
+    max_random_audio_mask_ratio: 0.3
+    txt_norm_type: whisper_basic
+    max_training_rand_seg_duration: 50
+  validation_ds:
+    manifest_filepath: ./manifests/dev_cuts.jsonl.gz
+    sample_rate: ${model.sample_rate}
+    batch_size: 1
+    prefetch_factor: 4
+    shuffle: false
+    use_start_end_token: false
+    num_workers: 16
+    pin_memory: true
+    use_lhotse: true
+    channel_selector: average
+    use_asd_for_stno: true
+    return_stno: false
+    return_video: true
+    return_visual_features: false
+    persistent_workers: true
+    txt_norm_type: whisper_basic_rm_disf
+  test_ds:
+    manifest_filepath: null
+    sample_rate: ${model.sample_rate}
+    batch_size: 16
+    shuffle: false
+    use_start_end_token: false
+    num_workers: 8
+    pin_memory: true
+  tokenizer:
+    dir: "" # Tokenizer is loaded from the pre-trained Parakeet model.
+    type: bpe
+  preprocessor:
+    _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
+    sample_rate: ${model.sample_rate}
+    normalize: per_feature
+    window_size: 0.025
+    window_stride: 0.01
+    window: hann
+    features: 128
+    n_fft: 512
+    frame_splicing: 1
+    dither: 1.0e-05
+    pad_to: 0
+  spec_augment:
+    _target_: nemo.collections.asr.modules.SpectrogramAugmentation
+    freq_masks: 2
+    time_masks: 10
+    freq_width: 27
+    time_width: 0.05
+  encoder:
+    _target_: src.model.modules.av_fastconformer_encoder.ConformerEncoderSTNOAV
+    feat_in: ${model.preprocessor.features}
+    feat_out: -1
+    n_layers: 24
+    d_model: 1024
+    use_bias: false
+    subsampling: dw_striding
+    subsampling_factor: 8
+    subsampling_conv_channels: 256
+    causal_downsampling: false
+    reduction: null
+    reduction_position: null
+    reduction_factor: 1
+    ff_expansion_factor: 4
+    self_attention_model: rel_pos
+    n_heads: 8
+    att_context_size: [-1, -1]
+    att_context_style: regular
+    xscaling: false
+    untie_biases: true
+    pos_emb_max_len: 45000
+    conv_kernel_size: 9
+    conv_norm_type: batch_norm
+    conv_context_size: null
+    dropout: 0.1
+    dropout_pre_encoder: 0.1
+    dropout_emb: 0.0
+    dropout_att: 0.1
+    stochastic_depth_drop_prob: 0.0
+    stochastic_depth_mode: linear
+    stochastic_depth_start_layer: 1
+    use_pre_pe_visual_conditioning: false
+    use_visual_conditioning_on_all_layers: true
+    visual_conditioning_method: non_lin_cross_fade_film
+    visual_preprocessing_model: base
+    conditioning_embed_aggr_method: softmax_wavg
+    num_conditioning_embeds: 25
+    d_visual_embeds: 1024
+    modality_dropout_prob: 0.0
+    use_visual_adapter_encoder: false
+    share_visual_preprocessing: false
+    use_stno: false
+  decoder:
+    _target_: nemo.collections.asr.modules.RNNTDecoder
+    normalization_mode: null
+    random_state_sampling: false
+    blank_as_pad: true
+    prednet:
+      pred_hidden: ${model.model_defaults.pred_hidden}
+      pred_rnn_layers: 2
+      t_max: null
+      dropout: 0.2
+  joint:
+    _target_: nemo.collections.asr.modules.RNNTJoint
+    log_softmax: null
+    preserve_memory: false
+    fuse_loss_wer: false
+    fused_batch_size: 4
+    jointnet:
+      joint_hidden: ${model.model_defaults.joint_hidden}
+      activation: relu
+      dropout: 0.2
+    num_extra_outputs: ${model.model_defaults.num_tdt_durations}
+  decoding:
+    strategy: greedy_batch
+    model_type: tdt
+    durations: ${model.model_defaults.tdt_durations}
+    greedy:
+      max_symbols: 10
+    beam:
+      beam_size: 2
+      return_best_hypothesis: false
+      score_norm: true
+      tsd_max_sym_exp: 50
+      alsd_max_target_len: 2.0
+    compute_timestamps: true
+    preserve_alignments: true
+  aux_ctc:
+    ctc_loss_weight: 0.3
+    use_cer: false
+    ctc_reduction: mean_batch
+    decoder:
+      _target_: nemo.collections.asr.modules.ConvASRDecoder
+      feat_in: null
+      num_classes: -1
+      vocabulary: []
+    decoding:
+      strategy: greedy
+  interctc:
+    loss_weights: []
+    apply_at_layers: []
+  loss:
+    loss_name: tdt
+    tdt_kwargs:
+      fastemit_lambda: 0.0
+      clamp: -1.0
+      durations: ${model.model_defaults.tdt_durations}
+      sigma: 0.02
+      omega: 0.1
+  optim:
+    name: adamw
+    lr: 0.1
+    betas: [0.9, 0.98]
+    weight_decay: 1e-3
+    sched:
+      name: NoamAnnealing
+      d_model: ${model.encoder.d_model}
+      warmup_steps: 15000
+      warmup_ratio: null
+      min_lr: 1e-6
+  audio_encoder_lr_multiplier: 1.0
+  vis_feat_extractor_lr_multiplier: 0.2
+  freeze_rnnt: true
+  extract_features_on_the_fly: true
+  extract_visual_features_all_layers: true
+  freeze_visual_encoder: true
+  visual_encoder_type: avhubert
+  visual_encoder_ckpt_path: ./model-bin/avsr_cocktail_mcorec_finetune
+  replace_zero_video_frames_with_zero_embeds: false
+  freeze_nonvision_parameters: true
+trainer:
+  devices: -1
+  num_nodes: 1
+  max_epochs: 1000
+  max_steps: -1
+  val_check_interval: 5000
+  accelerator: gpu
+  strategy: ddp
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  precision: bf16-mixed
+  log_every_n_steps: 10
+  enable_progress_bar: true
+  num_sanity_val_steps: 0
+  check_val_every_n_epoch: 1
+  sync_batchnorm: true
+  enable_checkpointing: false
+  logger: false
+  benchmark: false
+exp_manager:
+  exp_dir: ???
+  name: ${name}
+  create_tensorboard_logger: false
+  create_checkpoint_callback: true
+  checkpoint_callback_params:
+    monitor: val/cp_wer
+    mode: min
+    save_top_k: 5
+    always_save_nemo: true
+    every_n_train_steps: 5000
+    every_n_epochs: null
+  resume_from_checkpoint: null
+  resume_if_exists: true
+  resume_ignore_no_checkpoint: true
+  create_wandb_logger: true
+  wandb_logger_kwargs:
+    name: av_parakeet
+    project: but_speech_av_parakeet
