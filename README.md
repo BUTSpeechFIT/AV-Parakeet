@@ -134,5 +134,4 @@ If you’d like to improve the code, add new features, or extend the training pi
 
 ## 📬 Contact
 
-For questions or collaboration, please contact:
-* [iklement@fit.vut.cz](mailto:iklement@fit.vut.cz)
+For questions or collaboration, please contact: [iklement@fit.vut.cz](mailto:iklement@fit.vut.cz)
