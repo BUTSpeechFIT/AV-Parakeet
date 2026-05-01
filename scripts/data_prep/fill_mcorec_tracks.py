@@ -306,6 +306,10 @@ def process_session(
         speaker_metadata = metadata[speaker_name]
         speaker_output = out_session / "speakers" / speaker_name
 
+        if (speaker_output / "tracks_filled.mp4").exists() or (speaker_output / "tracks_filled_lip.mp4").exists():
+            print("skipping", speaker_output)
+            continue
+
         time_offset = 0.0
         if crop_type == "ego":
             if "ego" not in speaker_metadata:

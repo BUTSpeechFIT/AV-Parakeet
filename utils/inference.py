@@ -72,13 +72,11 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def load_inference_config(
-    checkpoint_path: Path,
+    checkpoint_path: str | Path,
     config_path: Path = DEFAULT_CONFIG_PATH,
 ) -> DictConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
     cfg = OmegaConf.load(config_path)
     cfg.init_from_ptl_ckpt = str(checkpoint_path)
@@ -274,9 +272,32 @@ def get_token_duration_seconds(cfg: DictConfig) -> float:
     )
 
 
+def normalize_model_source(model_source: str | Path) -> Path | str:
+    source_text = str(model_source).strip()
+    if not source_text:
+        raise ValueError("Model source must be specified.")
+
+    local_path = Path(source_text).expanduser()
+    if local_path.is_file():
+        return local_path.resolve()
+
+    return source_text
+
+
 def load_asr_model(cfg: DictConfig) -> EncDecRNNTBPEModelSTNOAV:
+    if cfg.get("init_from_ptl_ckpt") is None:
+        model_source = cfg.get("init_from_pretrained")
+    else:
+        model_source = normalize_model_source(cfg.get("init_from_ptl_ckpt"))
+
+    if isinstance(model_source, str):
+        return EncDecRNNTBPEModelSTNOAV.from_pretrained(
+            model_source,
+            map_location="cpu",
+        )
+
     checkpoint = torch.load(
-        cfg.init_from_ptl_ckpt,
+        model_source,
         weights_only=False,
         map_location="cpu",
     )
@@ -322,7 +343,7 @@ class InferenceRuntime:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: Path,
+        checkpoint_path: str | Path,
         device_name: str = "auto",
         config_path: Path = DEFAULT_CONFIG_PATH,
     ) -> InferenceRuntime:
@@ -337,6 +358,7 @@ class InferenceRuntime:
         self.audio_featurizer = create_audio_featurizer()
         self.video_transform = create_test_video_transform()
         self.model = load_asr_model(cfg)
+
         self.model.to(self.device)
         self.model.eval()
         self.token_duration_seconds = get_token_duration_seconds(cfg)

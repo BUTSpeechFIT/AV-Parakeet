@@ -32,8 +32,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--checkpoint",
-        required=True,
-        help="Path to the model checkpoint (.ckpt or .ptl).",
+        type=str,
+        default="BUT-FIT/AV-Parakeet_v0.1",
+        help="Path to a local model checkpoint (.ckpt or .ptl) or a Hugging Face model id.",
     )
     parser.add_argument(
         "--device",
@@ -103,13 +104,11 @@ def main() -> int:
 
     input_path = Path(args.input_path).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
-    checkpoint_path = Path(args.checkpoint).expanduser().resolve()
-
     video_paths = collect_video_paths(input_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info("Loading model from %s", checkpoint_path)
-    runtime = InferenceRuntime.from_checkpoint(checkpoint_path, device_name=args.device)
+    logging.info("Loading model from %s", args.checkpoint)
+    runtime = InferenceRuntime.from_checkpoint(args.checkpoint, device_name=args.device)
 
     logging.info("Processing %d video(s)", len(video_paths))
     failures: list[tuple[Path, Exception]] = []

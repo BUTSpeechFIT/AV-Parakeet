@@ -1,8 +1,9 @@
-name: avyt_lrs3_2_3_4spks_524k_wsil_10_40vid_6k_32k_aud_mask_temp_mask_15kwup_nlcf_film_vis_pretrain
+name: av_parakeet
 seed: 1234
 
 evaluate_at_start: false
-init_from_pretrained: nvidia/parakeet-tdt-0.6b-v2 # Initialization before training.
+init_from_pretrained: BUT-FIT/AV-Parakeet_v0.1
+# init_from_pretrained: nvidia/parakeet-tdt-0.6b-v2 # Initialization before training.
 # init_from_ptl_ckpt: ??? # If you want to initialize from a pre-trained model checkpoint.
 
 model:
@@ -18,7 +19,7 @@ model:
     tdt_durations: [0, 1, 2, 3, 4]
     num_tdt_durations: 5
   train_ds:
-    manifest_filepath: /home/jovyan/data/chime9/mcorec_data/manifests/from_kar/train_cuts_fixed2.jsonl.gz
+    manifest_filepath: ./manifests/train_cuts_fixed2.jsonl.gz
     sample_rate: ${model.sample_rate}
     batch_size: 16
     shuffle: true
@@ -44,7 +45,7 @@ model:
     txt_norm_type: whisper_basic
     max_training_rand_seg_duration: 50
   validation_ds:
-    manifest_filepath: /home/jovyan/data/chime9/mcorec_data/manifests/from_kar/dev_cuts.jsonl.gz
+    manifest_filepath: ./manifests/dev_cuts.jsonl.gz
     sample_rate: ${model.sample_rate}
     batch_size: 1
     prefetch_factor: 4
@@ -207,7 +208,7 @@ model:
   extract_visual_features_all_layers: true
   freeze_visual_encoder: true
   visual_encoder_type: avhubert
-  visual_encoder_ckpt_path: /home/jovyan/chime9/mcorec_baseline/model-bin/avsr_cocktail_mcorec_finetune
+  visual_encoder_ckpt_path: ./model-bin/avsr_cocktail_mcorec_finetune
   replace_zero_video_frames_with_zero_embeds: false
   freeze_nonvision_parameters: true
 trainer:
@@ -232,7 +233,7 @@ trainer:
 exp_manager:
   exp_dir: ???
   name: ${name}
-  create_tensorboard_logger: true
+  create_tensorboard_logger: false
   create_checkpoint_callback: true
   checkpoint_callback_params:
     monitor: val/cp_wer
@@ -246,5 +247,5 @@ exp_manager:
   resume_ignore_no_checkpoint: true
   create_wandb_logger: true
   wandb_logger_kwargs:
-    name: avyt_lrs3_2_3_4spks_524k_wsil_10_40vid_6k_32k_aud_mask_temp_mask_15kwup_nlcf_film_vis_pretrain
-    project: dk_chime9_v2
+    name: av_parakeet
+    project: but_speech_av_parakeet
