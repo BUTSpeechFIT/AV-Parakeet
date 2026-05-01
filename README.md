@@ -18,7 +18,6 @@ unzip model-bin.zip; unzip model-bin.zip`
 
 Our training codebase uses [Lhotse](https://github.com/lhotse-speech/lhotse) manifests. For inference, you can run our model on single video file, directory containing video files, or MCoRec data.
 
-
 ### MCoRec Data Setup
 To prepare the filled-in speaker tracks and Lhotse manifests, run:
 ```bash
@@ -36,20 +35,23 @@ We currently support two inference modes: MCoRec (CHiME-9) and standard per-vide
 
 3. If you want to infer MCoRec data, run the following inference command: 
     ```bash
-        python infer_mcorec.py \
-            +session_dir={path_to_mcorec_data}/dev/ \
-            +output_dir=predictions \
-            +timestamps=true \
-            +mode=full 
+    python infer_mcorec.py \
+        +session_dir={path_to_mcorec_data}/dev/ \
+        +output_dir=predictions \
+        +timestamps=true \
+        +mode=full 
     ```
 
 4. If you want to infer arbitrary video/dictionary full of videos, run:
-
-    `python infer.py --input {path_to_dir}/{video}.mp4 --output-dir output_transcripts`
+    ```bash
+    python infer.py --input {path_to_dir}/{video}.mp4 --output-dir output_transcripts`
+    ```
 
     or
 
-    `python infer.py --input "{path_to_dir}" --output-dir output_transcripts`
+    ```bash
+    python infer.py --input "{path_to_dir}" --output-dir output_transcripts`
+    ```
 
 The output of `infer_mcorec.py` is the in [CHiME-9 MCoRec task format](https://www.chimechallenge.org/challenges/chime9/task1/submission).
 
@@ -64,7 +66,7 @@ If you have changed any paths, go to `conf/av_parakeet.yaml` and change the part
 
 To run the training with the default settings, run:
 ```bash
-    python train.py +exp_dir="exps/"
+python train.py +exp_dir="exps/"
 ```
 
 It will automatically create `./exps/av_parakeet` directory with checkpoints.
