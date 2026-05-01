@@ -26,6 +26,46 @@ To prepare the filled-in speaker tracks and Lhotse manifests, run:
 
 The path should point to a directory with `train` and `dev` subdirectories (i.e., MCoRec dataset root).
 
+### General Data Setup
+To prepare datasets like LRS2, LRS3, AVYT, ..., use `scripts/data_prep/create_lrs_lhotse_manifests.py`. 
+
+This script assumes one directory at the input, that contains subdirectories that describe the data parts. Each subdirectory (data part) must contain `{fname}.video`, `{fname}.label`, and `{fname}.sample_id`: 
+- `.video` extension is not a video format, it is just for convenience to support multiple formats by default and was done by LRS2; hence, we adopted it. 
+- `.label` file contains a single line with the transcript.
+- `.sample_id` file contains a single line with the id of the sample. It should be unique across all the files in the particular subset.
+
+Here is an example of such file structure:
+```
+LRS2/
+├── train/
+     ...
+│   ├── 0000000001.label
+│   ├── 0000000001.sample_id
+│   ├── 0000000001.video
+│   └── ...
+├── valid/
+     ...
+│   ├── 0000000002.label
+│   ├── 0000000002.sample_id
+│   ├── 0000000002.video
+│   └── ...
+└── test/
+     ...
+│   ├── 0000000003.label
+│   ├── 0000000003.sample_id
+│   ├── 0000000003.video
+│   └── ...
+```
+
+To prepare the Lhotse manifests, run:
+```bash
+# Larger number of workers = faster processing.
+python scripts/data_prep/create_lrs_lhotse_manifests.py \
+    --data_dir {path_to_data_root} \
+    --output_manifest_dir ./manifests \
+    --num_workers 4
+```
+
 ## Inference
 We currently support two inference modes: MCoRec (CHiME-9) and standard per-video inference.
 
@@ -44,13 +84,13 @@ We currently support two inference modes: MCoRec (CHiME-9) and standard per-vide
 
 4. If you want to infer arbitrary video/dictionary full of videos, run:
     ```bash
-    python infer.py --input {path_to_dir}/{video}.mp4 --output-dir output_transcripts`
+    python infer.py --input {path_to_dir}/{video}.mp4 --output-dir output_transcripts
     ```
 
     or
 
     ```bash
-    python infer.py --input "{path_to_dir}" --output-dir output_transcripts`
+    python infer.py --input "{path_to_dir}" --output-dir output_transcripts
     ```
 
 The output of `infer_mcorec.py` is the in [CHiME-9 MCoRec task format](https://www.chimechallenge.org/challenges/chime9/task1/submission).

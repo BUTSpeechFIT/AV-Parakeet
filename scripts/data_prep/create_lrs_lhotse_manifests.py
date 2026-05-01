@@ -167,7 +167,7 @@ def main() -> None:
         description="Create Lhotse CutSets from LRS2 dataset directory structure"
     )
     parser.add_argument(
-        "--lrs2_dir",
+        "--data_dir",
         type=Path,
         required=True,
         help="Path to the LRS2 root directory containing dataset partitions",
@@ -211,21 +211,21 @@ def main() -> None:
     elif args.num_workers > 1:
         logging.info("Using %d worker processes", args.num_workers)
 
-    if not args.lrs2_dir.exists():
-        raise ValueError(f"LRS2 directory does not exist: {args.lrs2_dir}")
-    if not args.lrs2_dir.is_dir():
-        raise ValueError(f"LRS2 path is not a directory: {args.lrs2_dir}")
+    if not args.data_dir.exists():
+        raise ValueError(f"LRS2 directory does not exist: {args.data_dir}")
+    if not args.data_dir.is_dir():
+        raise ValueError(f"LRS2 path is not a directory: {args.data_dir}")
 
     args.output_manifest_dir.mkdir(parents=True, exist_ok=True)
     logging.info("Output manifests will be saved to: %s", args.output_manifest_dir)
 
     subdirs = {
         subdir.name: subdir
-        for subdir in sorted(args.lrs2_dir.iterdir(), key=lambda path: path.name)
+        for subdir in sorted(args.data_dir.iterdir(), key=lambda path: path.name)
         if subdir.is_dir()
     }
     if not subdirs:
-        raise ValueError(f"No subdirectories found in {args.lrs2_dir}")
+        raise ValueError(f"No subdirectories found in {args.data_dir}")
 
     if args.process_parts:
         part_names = list(dict.fromkeys(args.process_parts))
