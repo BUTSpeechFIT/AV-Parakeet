@@ -124,3 +124,15 @@ If you use our models or code, please cite the following works:
       url={https://arxiv.org/abs/2604.27436}, 
 }
 ```
+
+## 🤝 Contributing
+
+Contributions are welcome.
+If you’d like to improve the code, add new features, or extend the training pipeline, please open an issue or submit a pull request.
+
+---
+
+## 📬 Contact
+
+For questions or collaboration, please contact:
+* [iklement@fit.vut.cz](mailto:iklement@fit.vut.cz)
